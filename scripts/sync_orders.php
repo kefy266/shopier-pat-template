@@ -1,0 +1,20 @@
+<?php
+/**
+ * Yedek eşitleme: Webhook kaçarsa (sunucu kapalıydı vb.) Shopier'deki son ödenmiş
+ * siparişleri çekip bekleyen siparişlerle eşleştirir. Cron ile 10 dakikada bir çalıştırın
+ * (örnek satır README'de).
+ */
+
+declare(strict_types=1);
+require __DIR__ . '/../lib/shopier.php';
+require __DIR__ . '/../lib/store.php';
+
+$count = 0;
+foreach (ShopierClient::fromEnv()->listOrders(50) as $order) {
+    if (($order['paymentStatus'] ?? '') !== 'paid') continue;
+    $paid = isset($order['totals']['total']) ? (float) $order['totals']['total'] : null;
+    foreach ($order['lineItems'] ?? [] as $item) {
+        if (mark_order_paid((string) ($item['productId'] ?? ''), (string) $order['id'], $paid)) $count++;
+    }
+}
+echo "Eşitlendi: $count sipariş\n";

@@ -1,0 +1,6 @@
+.env
+storage/*
+!storage/.gitkeep
+*.sqlite
+*.token
+*.log
