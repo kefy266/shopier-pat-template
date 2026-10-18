@@ -44,7 +44,10 @@ function smtp_send(string $to, string $subject, string $text, ?string $html = nu
         $cmd("MAIL FROM:<$user>", [250]);
         $cmd("RCPT TO:<$to>", [250, 251]);
         $cmd('DATA', [354]);
-        $enc = fn(string $v) => '=?UTF-8?B?' . base64_encode($v) . '?=';
+        // Yalnızca ASCII dışı karakter içeren başlıklar kodlanır (gereksiz base64 spam puanını artırır)
+        $enc = fn(string $v) => preg_match('/[^\x20-\x7E]/', $v) ? '=?UTF-8?B?' . base64_encode($v) . '?=' : $v;
+        // Metin gövdesi quoted-printable; satır başındaki nokta kodlanır (SMTP DATA güvenliği)
+        $qp = fn(string $s) => preg_replace('/^\./m', '=2E', quoted_printable_encode(preg_replace("/\r\n|\r|\n/", "\r\n", $s))) . "\r\n";
         $domain = substr(strrchr($user, '@'), 1);
         $h = [
             'From: ' . $enc(getenv('MAIL_FROM_NAME') ?: 'Bildirim') . " <$user>",
@@ -58,24 +61,24 @@ function smtp_send(string $to, string $subject, string $text, ?string $html = nu
         // Gövde: düz metin (+ HTML alternatifi); ek varsa multipart/mixed içine alınır.
         if ($html === null) {
             $type = 'text/plain; charset=UTF-8';
-            $enc = 'Content-Transfer-Encoding: base64';
-            $content = chunk_split(base64_encode($text));
+            $cte = 'Content-Transfer-Encoding: quoted-printable';
+            $content = $qp($text);
         } else {
             $b = 'b-' . bin2hex(random_bytes(8));
             $type = "multipart/alternative; boundary=\"$b\"";
-            $enc = '';
-            $content = "--$b\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" . chunk_split(base64_encode($text))
-                     . "--$b\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" . chunk_split(base64_encode($html))
+            $cte = '';
+            $content = "--$b\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n" . $qp($text)
+                     . "--$b\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n" . $qp($html)
                      . "--$b--\r\n";
         }
         if (!$attachments) {
             $h[] = 'Content-Type: ' . $type;
-            if ($enc !== '') $h[] = $enc;
+            if ($cte !== '') $h[] = $cte;
             $body = $content;
         } else {
             $m = 'm-' . bin2hex(random_bytes(8));
             $h[] = "Content-Type: multipart/mixed; boundary=\"$m\"";
-            $body = "--$m\r\nContent-Type: $type\r\n" . ($enc !== '' ? "$enc\r\n" : '') . "\r\n" . $content;
+            $body = "--$m\r\nContent-Type: $type\r\n" . ($cte !== '' ? "$cte\r\n" : '') . "\r\n" . $content;
             foreach ($attachments as $a) {
                 $n = '=?UTF-8?B?' . base64_encode($a['name']) . '?=';
                 $body .= "--$m\r\nContent-Type: " . ($a['type'] ?? 'application/octet-stream') . "; name=\"$n\"\r\n"
