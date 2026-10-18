@@ -1,83 +1,88 @@
 # Shopier PAT Template
 
-Shopier REST API v1 ile **Personal Access Token (PAT)** kullanarak ödeme almak için sade, bağımlılıksız bir PHP şablonu.
+Shopier REST API v1 ile **Personal Access Token (PAT)** kullanarak ödeme ve **aylık abonelik** tahsilatı için sade, bağımlılıksız bir PHP şablonu.
 
-- Siparişe özel tek kullanımlık **ödeme bağlantısı** (dijital ürün) oluşturur.
-- Ödemeyi **imzalı webhook** (`Shopier-Signature`, HMAC-SHA256) ile doğrular.
-- Webhook kaçarsa **yedek eşitleme** betiği ödenmiş siparişleri sonradan yakalar.
-- Aynı bildirim iki kez gelirse sipariş ikinci kez işlenmez (idempotent).
+- **Site içi ödeme:** Shopier ödeme sayfası sizin sayfanızın içinde açılır, müşteri siteden ayrılmaz. Kart bilgisi sunucunuza gelmez.
+- **İmzalı webhook:** Ödeme `Shopier-Signature` (HMAC-SHA256) ile doğrulanır.
+- **Üç katmanlı doğrulama:** Webhook + ödeme sayfasının canlı sorgusu + cron yedek eşitleme. Bildirim kaçsa bile ödeme işlenir.
+- **Aylık faturalandırma:** Fatura oluşturma, hatırlatma, gecikmede askıya alma, ödemede otomatik açma.
+- **HTML e-posta bildirimleri:** "Faturanız oluştu", "Son ödeme yarın", "Ödemeniz alındı", "Askıya alındı".
+- Aynı ödeme iki kez gelirse ikinci kez işlenmez (idempotent).
 
-> PHP 8.1+, `curl` ve `pdo_sqlite` eklentileri. Framework veya Composer gerekmez.
+> PHP 8.1+, `curl`, `openssl`, `pdo_sqlite`. Framework veya Composer gerekmez.
 
 ## Akış
 
 ```
-Müşteri ──► checkout.php ──► Shopier: POST /products (tek kullanımlık dijital ürün)
-                │                         │
-                │◄──────── ödeme URL'si ───┘
-                ▼
-        Shopier ödeme sayfası (kart bilgisi burada girilir, 3D Secure)
-                │
-                ▼
-Shopier ──► webhook.php  (order.created, Shopier-Signature ile imzalı)
-                │  lineItems[].productId ↔ orders.shopier_product_id
-                ▼
-          sipariş "paid" ──► on_order_paid()  (hesap, e-posta, teslimat…)
+checkout.php ──► pay.php ──► (ilk açılışta) Shopier: POST /products → tek kullanımlık ödeme ürünü
+                   │
+                   ├─ iframe: Shopier ödeme sayfası (kart + 3D Secure)   ← "yeni sekmede aç" yedeği
+                   └─ status.php her 5 sn: ödendi mi? (gerekirse Shopier'e doğrudan sorar)
+
+Shopier ──► webhook.php (order.created, imzalı) ──► mark_product_paid()
+                                                      ├─ sipariş → on_order_paid() → abonelik başlar
+                                                      └─ fatura  → ödendi, askıdaki abonelik açılır
+
+cron: scripts/billing.php      saatlik — yeni dönem faturası, hatırlatma, askıya alma
+cron: scripts/sync_orders.php  10 dk   — webhook kaçarsa ödenmiş siparişleri eşitler
 ```
 
 ## Kurulum
 
-1. **PAT oluşturun:** Shopier paneli → geliştirici / API bölümü. Gerekli yetkiler:
-   `products:write`, `orders:read`. İsteğe bağlı: `refunds:write`, `discounts:write`.
-2. **Ortam değişkenleri:** `.env.example` dosyasını referans alın.
-   ```bash
-   export SHOPIER_PAT="..."          # asla depoya eklemeyin
-   ```
-3. **Web kökü** olarak yalnızca `public/` klasörünü yayınlayın. `storage/` ve `lib/` web'den erişilememelidir.
+1. **PAT:** Shopier paneli → geliştirici / API. Gerekli yetkiler: `products:write`, `orders:read`.
+2. **Ortam değişkenleri:** `.env.example` dosyasını referans alın (`SHOPIER_PAT`, `APP_URL`, `APP_SECRET`, `SMTP_*`).
+3. **Web kökü:** Yalnızca `public/` yayınlanmalı. `lib/`, `scripts/`, `storage/` web'den erişilemez olmalı.
 4. **Webhook kaydı** (imza anahtarı `storage/webhook.token` dosyasına yazılır):
    ```bash
    php scripts/register_webhook.php https://siteniz.com/webhook.php
    ```
-5. **Yedek eşitleme** (cron, 10 dakikada bir):
+5. **Cron:**
    ```cron
-   */10 * * * * SHOPIER_PAT=... php /yol/scripts/sync_orders.php >> /var/log/shopier-sync.log 2>&1
+   7 * * * *     cd /yol && php scripts/billing.php     >> /var/log/billing.log 2>&1
+   */10 * * * *  cd /yol && php scripts/sync_orders.php >> /var/log/shopier-sync.log 2>&1
    ```
-6. `lib/store.php` içindeki `on_order_paid()` fonksiyonuna kendi iş mantığınızı yazın.
+6. İş mantığınızı `lib/store.php` içindeki `on_order_paid()` fonksiyonuna yazın.
 
 ## Dosyalar
 
 | Dosya | Görev |
 |---|---|
-| `lib/shopier.php` | API istemcisi: ürün (ödeme bağlantısı), sipariş, webhook işlemleri |
+| `lib/shopier.php` | API istemcisi: ödeme ürünü, sipariş, webhook |
 | `lib/webhook.php` | `Shopier-Signature` doğrulama |
-| `lib/store.php` | Örnek SQLite sipariş deposu ve `mark_order_paid()` |
-| `public/checkout.php` | Ödeme başlatma örneği |
+| `lib/store.php` | Örnek SQLite: siparişler, abonelikler, faturalar; `mark_product_paid()` |
+| `lib/mailer.php` | SMTP gönderici + HTML bildirim şablonu |
+| `lib/links.php` | E-postadaki fatura ödeme bağlantılarının imzası |
+| `public/checkout.php` | Siparişi kaydeder, ödeme sayfasına yönlendirir |
+| `public/pay.php` | Site içi ödeme sayfası (sipariş / fatura) |
+| `public/status.php` | Canlı ödeme durumu |
 | `public/webhook.php` | Webhook alıcısı |
-| `scripts/register_webhook.php` | `order.created` aboneliği oluşturur |
-| `scripts/sync_orders.php` | Webhook kaçarsa ödenmiş siparişleri eşitler |
+| `scripts/billing.php` | Aylık faturalandırma (`--dry-run` destekli) |
+| `scripts/register_webhook.php` | `order.created` aboneliği |
+| `scripts/sync_orders.php` | Yedek eşitleme |
 
 ## PAT ile neler yapılabilir, neler yapılamaz?
 
 | Yapılabilir | Yapılamaz |
 |---|---|
-| Ödeme bağlantısı (dijital ürün) oluşturma | Kart bilgisini kendi sitenizde alıp çekim yapma |
-| Siparişleri listeleme / ödeme durumunu sorgulama | Kart saklama (tokenization) |
-| Webhook ile anlık ödeme bildirimi | Otomatik tekrarlayan (abonelik) çekim |
-| İade başlatma (`refunds:write`) | |
-| İndirim kodu oluşturma (`discounts:write`) | |
-| Bakiye ve ödeme aktarımlarını görüntüleme | |
+| Ödeme bağlantısı (dijital ürün) oluşturma | Kart bilgisini kendi formunuzla alıp çekim yapma |
+| Ödeme sayfasını kendi sitenizde iframe içinde açma | Kart saklama (tokenization) |
+| Siparişleri ve ödeme durumunu sorgulama | Otomatik tekrarlayan kart çekimi |
+| Webhook ile anlık ödeme bildirimi | |
+| İade, indirim kodu, bakiye, ödeme aktarımları (yetkiye göre) | |
 
-Kart bilgisi her zaman Shopier'in güvenli ödeme sayfasında girilir. Bu, sizi kart verisi işleme (PCI DSS) yükümlülüğünden korur.
+Aylık abonelik bu yüzden "her ay fatura + ödeme bağlantısı" modeliyle çalışır: müşteri e-postadaki bağlantıdan birkaç saniyede öder.
 
-## Güvenlik notları
+## Güvenlik ve teslim edilebilirlik
 
-- Tutarı **asla istemciden almayın**; sunucudaki fiyat listenizden belirleyin.
-- Webhook imzası tutmayan istekleri işlemeyin (şablon 401 döndürür).
-- Ödenen tutar sipariş tutarından düşükse sipariş işlenmez.
-- `storage/` klasörünü (veritabanı, imza anahtarı) web'e kapatın. Nginx örneği:
+- Tutarı asla istemciden almayın; sunucudaki fiyat listesinden belirleyin.
+- İmzası tutmayan webhook işlenmez (401). Ödenen tutar beklenenden düşükse işlenmez.
+- Ödeme sayfası yalnızca siparişi oluşturan oturumda veya imzalı fatura bağlantısıyla açılır.
+- `storage/` (veritabanı, imza anahtarı) web'e kapatılmalı:
   ```nginx
-  location ~* \.(sqlite|db|token|log)$ { return 404; }
+  location ~* \.(sqlite|db|token|log|env)$ { return 404; }
   ```
+- E-postaların spam'e düşmemesi için gönderen alan adında **SPF**, **DKIM** ve **DMARC** kayıtları tanımlı olmalı. Gönderen sunucunun ters DNS (PTR) kaydı da ayarlanmalı.
+- Bazı bankaların 3D Secure ekranı ve Safari iframe'i kısıtlayabilir; `pay.php` bu durumda "yeni sekmede aç" bağlantısı sunar. Durum takibi her iki durumda da çalışır.
 
 ## Lisans
 

@@ -2,7 +2,7 @@
 /**
  * Shopier webhook alıcısı (order.created).
  * 1) Shopier-Signature imzasını doğrular, 2) siparişin lineItems[].productId değerini
- * bizim siparişle eşleştirir, 3) siparişi "paid" yapar. Tekrar gelen bildirim yok sayılır.
+ * bizim sipariş ya da faturayla eşleştirir, 3) "paid" yapar. Tekrar gelen bildirim yok sayılır.
  */
 
 declare(strict_types=1);
@@ -30,7 +30,7 @@ if (($order['paymentStatus'] ?? 'paid') !== 'paid') {
 $paid = isset($order['totals']['total']) ? (float) $order['totals']['total'] : null;
 $processed = [];
 foreach ($order['lineItems'] ?? [] as $item) {
-    $id = mark_order_paid((string) ($item['productId'] ?? ''), (string) ($order['id'] ?? ''), $paid);
+    $id = mark_product_paid((string) ($item['productId'] ?? ''), (string) ($order['id'] ?? ''), $paid);   // sipariş ya da aylık fatura
     if ($id) $processed[] = $id;
 }
 echo json_encode(['ok' => true, 'processed' => $processed]);
