@@ -9,7 +9,7 @@
 
 declare(strict_types=1);
 
-function smtp_send(string $to, string $subject, string $text, ?string $html = null, string $toName = ''): bool
+function smtp_send(string $to, string $subject, string $text, ?string $html = null, string $toName = '', array $attachments = []): bool
 {
     $host = getenv('SMTP_HOST') ?: '';
     $user = getenv('SMTP_USER') ?: '';
@@ -55,16 +55,33 @@ function smtp_send(string $to, string $subject, string $text, ?string $html = nu
             'Message-ID: <' . bin2hex(random_bytes(12)) . "@$domain>",
             'MIME-Version: 1.0',
         ];
+        // Gövde: düz metin (+ HTML alternatifi); ek varsa multipart/mixed içine alınır.
         if ($html === null) {
-            $h[] = 'Content-Type: text/plain; charset=UTF-8';
-            $h[] = 'Content-Transfer-Encoding: base64';
-            $body = chunk_split(base64_encode($text));
+            $type = 'text/plain; charset=UTF-8';
+            $enc = 'Content-Transfer-Encoding: base64';
+            $content = chunk_split(base64_encode($text));
         } else {
             $b = 'b-' . bin2hex(random_bytes(8));
-            $h[] = "Content-Type: multipart/alternative; boundary=\"$b\"";
-            $body = "--$b\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" . chunk_split(base64_encode($text))
-                  . "--$b\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" . chunk_split(base64_encode($html))
-                  . "--$b--\r\n";
+            $type = "multipart/alternative; boundary=\"$b\"";
+            $enc = '';
+            $content = "--$b\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" . chunk_split(base64_encode($text))
+                     . "--$b\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" . chunk_split(base64_encode($html))
+                     . "--$b--\r\n";
+        }
+        if (!$attachments) {
+            $h[] = 'Content-Type: ' . $type;
+            if ($enc !== '') $h[] = $enc;
+            $body = $content;
+        } else {
+            $m = 'm-' . bin2hex(random_bytes(8));
+            $h[] = "Content-Type: multipart/mixed; boundary=\"$m\"";
+            $body = "--$m\r\nContent-Type: $type\r\n" . ($enc !== '' ? "$enc\r\n" : '') . "\r\n" . $content;
+            foreach ($attachments as $a) {
+                $n = '=?UTF-8?B?' . base64_encode($a['name']) . '?=';
+                $body .= "--$m\r\nContent-Type: " . ($a['type'] ?? 'application/octet-stream') . "; name=\"$n\"\r\n"
+                       . "Content-Disposition: attachment; filename=\"$n\"\r\nContent-Transfer-Encoding: base64\r\n\r\n" . chunk_split(base64_encode($a['content']));
+            }
+            $body .= "--$m--\r\n";
         }
         $cmd(implode("\r\n", $h) . "\r\n\r\n" . $body . "\r\n.", [250]);
         $cmd('QUIT', [221]);
@@ -78,7 +95,7 @@ function smtp_send(string $to, string $subject, string $text, ?string $html = nu
 }
 
 /** Sade HTML bildirim e-postası (başlık, metin, özet tablo, isteğe bağlı düğme). */
-function send_notice(string $to, string $name, string $subject, string $title, string $message, array $rows = [], ?array $button = null): bool
+function send_notice(string $to, string $name, string $subject, string $title, string $message, array $rows = [], ?array $button = null, array $attachments = []): bool
 {
     $e = fn($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
     $text = "Merhaba $name,\n\n$message\n\n";
@@ -96,5 +113,5 @@ function send_notice(string $to, string $name, string $subject, string $title, s
           . '<p style="margin:0 0 6px;color:#3f3f3f">Merhaba ' . $e($name) . ',</p><p style="margin:0 0 16px;color:#3f3f3f;line-height:1.6">' . $e($message) . '</p>'
           . ($table ? '<table width="100%" cellpadding="0" cellspacing="0" style="font-size:14px">' . $table . '</table>' : '') . $btn
           . '</div></div>';
-    return smtp_send($to, $subject, $text, $html, $name);
+    return smtp_send($to, $subject, $text, $html, $name, $attachments);
 }

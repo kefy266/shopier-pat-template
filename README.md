@@ -7,6 +7,7 @@ Shopier REST API v1 ile **Personal Access Token (PAT)** kullanarak ödeme ve **a
 - **Üç katmanlı doğrulama:** Webhook + ödeme sayfasının canlı sorgusu + cron yedek eşitleme. Bildirim kaçsa bile ödeme işlenir.
 - **Aylık faturalandırma:** Fatura oluşturma, hatırlatma, gecikmede askıya alma, ödemede otomatik açma.
 - **HTML e-posta bildirimleri:** "Faturanız oluştu", "Son ödeme yarın", "Ödemeniz alındı", "Askıya alındı".
+- **PDF fatura:** Ödeme alınınca fatura PDF'i otomatik üretilir ve e-postaya eklenir; imzalı bağlantıyla indirilebilir. Kütüphane gerekmez (TrueType alt küme gömme, Türkçe karakter desteği).
 - Aynı ödeme iki kez gelirse ikinci kez işlenmez (idempotent).
 
 > PHP 8.1+, `curl`, `openssl`, `pdo_sqlite`. Framework veya Composer gerekmez.
@@ -36,12 +37,18 @@ cron: scripts/sync_orders.php  10 dk   — webhook kaçarsa ödenmiş siparişle
    ```bash
    php scripts/register_webhook.php https://siteniz.com/webhook.php
    ```
+   > Shopier her olay türü için **tek** webhook adresine izin verir (ikinci kayıt `409 conflict` döner).
+   > Aynı Shopier hesabını birden çok uygulama kullanıyorsa, webhook'u bir uygulamaya kaydedin; o uygulama
+   > eşleştiremediği ödemeleri **aynı gövde ve `Shopier-Signature` başlığıyla** diğer uygulamaya iletsin.
+   > Diğer uygulama aynı imza anahtarıyla doğrular. `sync_orders.php` yedeği yine de çalışır.
 5. **Cron:**
    ```cron
    7 * * * *     cd /yol && php scripts/billing.php     >> /var/log/billing.log 2>&1
    */10 * * * *  cd /yol && php scripts/sync_orders.php >> /var/log/shopier-sync.log 2>&1
    ```
 6. İş mantığınızı `lib/store.php` içindeki `on_order_paid()` fonksiyonuna yazın.
+7. **PDF fatura (isteğe bağlı ayarlar):** `SELLER_INFO` (satırlar `|` ile ayrılır), `PDF_FONT_REGULAR` / `PDF_FONT_BOLD`
+   (varsayılan: sistemdeki Noto Sans / DejaVu Sans / Liberation Sans), `PDF_LOGO_SVG` (tek yollu SVG).
 
 ## Dosyalar
 
@@ -52,10 +59,13 @@ cron: scripts/sync_orders.php  10 dk   — webhook kaçarsa ödenmiş siparişle
 | `lib/store.php` | Örnek SQLite: siparişler, abonelikler, faturalar; `mark_product_paid()` |
 | `lib/mailer.php` | SMTP gönderici + HTML bildirim şablonu |
 | `lib/links.php` | E-postadaki fatura ödeme bağlantılarının imzası |
+| `lib/pdf.php` | Bağımlılıksız PDF üretici (TrueType alt küme, vektör logo) ve fatura şablonu |
+| `lib/receipt.php` | Sipariş / aylık fatura için PDF belge |
 | `public/checkout.php` | Siparişi kaydeder, ödeme sayfasına yönlendirir |
 | `public/pay.php` | Site içi ödeme sayfası (sipariş / fatura) |
 | `public/status.php` | Canlı ödeme durumu |
 | `public/webhook.php` | Webhook alıcısı |
+| `public/invoice_pdf.php` | Fatura PDF'i (imzalı bağlantı) |
 | `scripts/billing.php` | Aylık faturalandırma (`--dry-run` destekli) |
 | `scripts/register_webhook.php` | `order.created` aboneliği |
 | `scripts/sync_orders.php` | Yedek eşitleme |
@@ -82,6 +92,7 @@ Aylık abonelik bu yüzden "her ay fatura + ödeme bağlantısı" modeliyle çal
   location ~* \.(sqlite|db|token|log|env)$ { return 404; }
   ```
 - E-postaların spam'e düşmemesi için gönderen alan adında **SPF**, **DKIM** ve **DMARC** kayıtları tanımlı olmalı. Gönderen sunucunun ters DNS (PTR) kaydı da ayarlanmalı.
+- PDF belge, ödeme kaydı niteliğindedir; Türkiye'de resmi fatura için e-Arşiv / e-Fatura entegrasyonu (GİB veya özel entegratör) ayrıca gerekir.
 - Bazı bankaların 3D Secure ekranı ve Safari iframe'i kısıtlayabilir; `pay.php` bu durumda "yeni sekmede aç" bağlantısı sunar. Durum takibi her iki durumda da çalışır.
 
 ## Lisans

@@ -6,6 +6,7 @@
 
 declare(strict_types=1);
 require_once __DIR__ . '/mailer.php';
+require_once __DIR__ . '/receipt.php';
 
 function db(): PDO
 {
@@ -66,7 +67,7 @@ function mark_product_paid(string $productId, string $shopierOrderId, ?float $pa
         $up = $pdo->prepare('UPDATE orders SET status = "paid", shopier_order_id = ?, paid_at = CURRENT_TIMESTAMP WHERE id = ? AND status != "paid"');
         $up->execute([$shopierOrderId, $order['id']]);
         if ($up->rowCount() === 0) return null;
-        on_order_paid($order);
+        on_order_paid(['shopier_order_id' => $shopierOrderId, 'paid_at' => gmdate('Y-m-d H:i:s')] + $order);
         return $order['id'];
     }
 
@@ -80,10 +81,23 @@ function mark_product_paid(string $productId, string $shopierOrderId, ?float $pa
         $pdo->prepare('UPDATE subscriptions SET status = "active" WHERE id = ? AND status = "suspended"')->execute([$inv['subscription_id']]);
         send_notice($inv['email'], $inv['name'], 'Ödemeniz alındı — ' . $inv['number'], 'Ödemeniz alındı',
             $inv['number'] . ' numaralı faturanızın ödemesi alındı. Teşekkür ederiz.',
-            ['Fatura' => $inv['number'], 'Dönem' => $inv['period'], 'Tutar' => money((float) $inv['amount'])]);
+            ['Fatura' => $inv['number'], 'Dönem' => $inv['period'], 'Tutar' => money((float) $inv['amount'])], null,
+            pdf_attachment(fn() => invoice_receipt_pdf((int) $inv['id'])));   // PDF fatura ekte
         return $inv['number'];
     }
     return null;
+}
+
+/** PDF üretimi başarısız olsa bile e-posta gider; hata log'a yazılır. */
+function pdf_attachment(callable $make): array
+{
+    try {
+        $a = $make();
+        return $a ? [$a] : [];
+    } catch (Throwable $e) {
+        error_log('PDF: ' . $e->getMessage());
+        return [];
+    }
 }
 
 function amount_ok(?float $paid, float $expected, string $ref): bool
@@ -110,5 +124,6 @@ function on_order_paid(array $order): void
         ->execute([$order['id'], $order['email'], $order['name'], $order['title'], $order['amount']]);
     send_notice($order['email'], $order['name'] ?: 'Merhaba', 'Siparişiniz onaylandı — ' . $order['id'], 'Ödemeniz alındı',
         'Siparişiniz onaylandı. Aylık faturalarınız her ay aynı gün oluşturulur ve e-postayla bildirilir.',
-        ['Sipariş' => $order['id'], 'Ürün' => $order['title'], 'Tutar' => money((float) $order['amount'])]);
+        ['Sipariş' => $order['id'], 'Ürün' => $order['title'], 'Tutar' => money((float) $order['amount'])], null,
+        pdf_attachment(fn() => order_receipt_pdf($order)));   // PDF fatura ekte
 }
