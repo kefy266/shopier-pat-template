@@ -10,7 +10,8 @@ Shopier REST API v1 ile **Personal Access Token (PAT)** kullanarak ödeme ve **a
 - **PDF fatura:** Ödeme alınınca fatura PDF'i otomatik üretilir ve e-postaya eklenir; imzalı bağlantıyla indirilebilir. Kütüphane gerekmez (TrueType alt küme gömme, Türkçe karakter desteği).
 - Aynı ödeme iki kez gelirse ikinci kez işlenmez (idempotent).
 
-> PHP 8.1+, `curl`, `openssl`, `pdo_sqlite`. Framework veya Composer gerekmez.
+> PHP 8.2+ (önerilen 8.3 veya üstü; 8.3, 8.4 ve 8.5 ile denendi), `curl`, `openssl`, `pdo_sqlite`. Framework veya Composer gerekmez.
+> PHP 8.1 artık güvenlik yaması almıyor; 8.2 desteği 2026 sonunda bitiyor.
 
 ## Akış
 
