@@ -27,6 +27,7 @@ Shopier ──► webhook.php (order.created, imzalı) ──► mark_product_pa
 
 cron: scripts/billing.php      saatlik — yeni dönem faturası, hatırlatma, askıya alma
 cron: scripts/sync_orders.php  10 dk   — webhook kaçarsa ödenmiş siparişleri eşitler
+cron: scripts/refund_check.php 30 dk   — Shopier'de iade/iptal edilen ödemeleri geri alır
 ```
 
 ## Kurulum
@@ -46,6 +47,7 @@ cron: scripts/sync_orders.php  10 dk   — webhook kaçarsa ödenmiş siparişle
    ```cron
    7 * * * *     cd /yol && php scripts/billing.php     >> /var/log/billing.log 2>&1
    */10 * * * *  cd /yol && php scripts/sync_orders.php >> /var/log/shopier-sync.log 2>&1
+   */30 * * * *  cd /yol && php scripts/refund_check.php >> /var/log/shopier-iade.log 2>&1
    ```
 6. İş mantığınızı `lib/store.php` içindeki `on_order_paid()` fonksiyonuna yazın.
 7. **PDF fatura (isteğe bağlı ayarlar):** `SELLER_INFO` (satırlar `|` ile ayrılır), `PDF_FONT_REGULAR` / `PDF_FONT_BOLD`
@@ -70,6 +72,7 @@ cron: scripts/sync_orders.php  10 dk   — webhook kaçarsa ödenmiş siparişle
 | `scripts/billing.php` | Aylık faturalandırma (`--dry-run` destekli) |
 | `scripts/register_webhook.php` | `order.created` aboneliği |
 | `scripts/sync_orders.php` | Yedek eşitleme |
+| `scripts/refund_check.php` | İade / iptal takibi (ödemesi geri alınan hizmeti durdurur) |
 
 ## PAT ile neler yapılabilir, neler yapılamaz?
 
@@ -82,6 +85,18 @@ cron: scripts/sync_orders.php  10 dk   — webhook kaçarsa ödenmiş siparişle
 | İade, indirim kodu, bakiye, ödeme aktarımları (yetkiye göre) | |
 
 Aylık abonelik bu yüzden "her ay fatura + ödeme bağlantısı" modeliyle çalışır: müşteri e-postadaki bağlantıdan birkaç saniyede öder.
+
+## Ödeme doğrulama kuralları
+
+Ödeme sayfası Shopier'i site içinde (iframe) gösterir; bu yüzden **tarayıcıdan gelen hiçbir şeye güvenilmez.** Bir ödeme ancak şu kurallar sağlanırsa işlenir (`shopier_verify_order`):
+
+- Webhook gövdesi yalnızca sipariş numarasını verir; sipariş **Shopier API'sinden yeniden okunur**, karar o kayda göre verilir.
+- `paymentStatus` tam olarak `paid` olmalı (alan yoksa ödenmemiş sayılır); sipariş iptal edilmemiş, iade edilmemiş olmalı.
+- Siparişte **yalnızca bu ödeme ürünü, 1 adet** bulunmalı.
+- Ödenen tutar bilinmeli ve beklenen tutarı karşılamalı: **0 TL, %100 kupon, eksik tutar ya da tutar bilgisi olmayan bildirim reddedilir.**
+- Ödeme sonrası dönüş/başarı sayfası ödemeyi asla onaylamaz; yalnızca veritabanındaki durumu gösterir.
+- `refund_check.php`, ödendikten sonra Shopier'de iade/iptal edilen ödemeleri bulur ve hizmeti durdurur ("öde → al → iade et" istismarı).
+- Shopier Modül API (api_pay4) dönüşü kullanılmaz: dönüşteki `status` alanı imzanın dışındadır ve müşterinin tarayıcısından gelir; başarısız bir ödemenin dönüşü `success` yapılarak tekrar gönderilebilir.
 
 ## Güvenlik ve teslim edilebilirlik
 

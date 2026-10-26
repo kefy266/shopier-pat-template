@@ -20,7 +20,7 @@ function db(): PDO
         name               TEXT NOT NULL DEFAULT "",
         title              TEXT NOT NULL,
         amount             REAL NOT NULL,
-        status             TEXT NOT NULL DEFAULT "pending",   -- pending | awaiting_payment | paid
+        status             TEXT NOT NULL DEFAULT "pending",   -- pending | awaiting_payment | paid | refunded
         shopier_product_id TEXT,
         shopier_order_id   TEXT,
         created_at         TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -43,16 +43,56 @@ function db(): PDO
         amount             REAL NOT NULL,
         due_date           TEXT NOT NULL,
         period             TEXT NOT NULL,
-        status             TEXT NOT NULL DEFAULT "unpaid",  -- unpaid | paid | cancelled
+        status             TEXT NOT NULL DEFAULT "unpaid",  -- unpaid | paid | cancelled | refunded
         shopier_product_id TEXT,
+        shopier_order_id   TEXT,
         reminded_at        TEXT,
         paid_at            TEXT
     )');
+    // Eski kurulumlar için: faturalarda Shopier sipariş no sütunu (iade takibi bunu kullanır)
+    $cols = array_column($pdo->query('PRAGMA table_info(invoices)')->fetchAll(PDO::FETCH_ASSOC), 'name');
+    if (!in_array('shopier_order_id', $cols, true)) $pdo->exec('ALTER TABLE invoices ADD COLUMN shopier_order_id TEXT');
     return $pdo;
 }
 
 /**
- * Shopier'de ödendiği bildirilen ürünü (sipariş ya da fatura) işler.
+ * Shopier siparişini doğrulayıp içindeki ürünleri işler. Webhook, status.php ve sync_orders.php bunu kullanır;
+ * siparişi her zaman Shopier API'sinden okunmuş haliyle verin (webhook gövdesini doğrudan vermeyin).
+ * @return string[] işlenen sipariş/fatura numaraları
+ */
+function process_shopier_order(array $so): array
+{
+    $done = [];
+    foreach ($so['lineItems'] ?? [] as $item) {
+        $productId = (string) ($item['productId'] ?? '');
+        $expected = expected_amount($productId);
+        if ($expected === null) continue;   // bu uygulamaya ait değil
+        $paid = shopier_verify_order($so, $productId, $expected, $reason);
+        if ($paid === null) {
+            error_log('Shopier sipariş ' . ($so['id'] ?? '-') . " reddedildi ($productId): $reason");
+            continue;
+        }
+        if ($id = mark_product_paid($productId, (string) ($so['id'] ?? ''), $paid)) $done[] = $id;
+    }
+    return $done;
+}
+
+/** Bu Shopier ürününe karşılık gelen sipariş ya da faturanın beklenen tutarı (bizde yoksa null). */
+function expected_amount(string $productId): ?float
+{
+    if ($productId === '') return null;
+    foreach (['SELECT amount FROM orders WHERE shopier_product_id = ?', 'SELECT amount FROM invoices WHERE shopier_product_id = ?'] as $sql) {
+        $st = db()->prepare($sql);
+        $st->execute([$productId]);
+        $v = $st->fetchColumn();
+        if ($v !== false) return (float) $v;
+    }
+    return null;
+}
+
+/**
+ * Shopier'de ödendiği DOĞRULANMIŞ ürünü (sipariş ya da fatura) işler.
+ * Doğrudan çağırmayın: process_shopier_order() üzerinden gelin.
  * Aynı ödeme tekrar gelirse null döner (idempotent).
  */
 function mark_product_paid(string $productId, string $shopierOrderId, ?float $paidTotal): ?string
@@ -75,8 +115,8 @@ function mark_product_paid(string $productId, string $shopierOrderId, ?float $pa
     $st->execute([$productId]);
     if ($inv = $st->fetch(PDO::FETCH_ASSOC)) {
         if ($inv['status'] === 'paid' || !amount_ok($paidTotal, (float) $inv['amount'], $inv['number'])) return null;
-        $up = $pdo->prepare('UPDATE invoices SET status = "paid", paid_at = CURRENT_TIMESTAMP WHERE id = ? AND status != "paid"');
-        $up->execute([$inv['id']]);
+        $up = $pdo->prepare('UPDATE invoices SET status = "paid", paid_at = CURRENT_TIMESTAMP, shopier_order_id = ? WHERE id = ? AND status != "paid"');
+        $up->execute([$shopierOrderId, $inv['id']]);
         if ($up->rowCount() === 0) return null;
         $pdo->prepare('UPDATE subscriptions SET status = "active" WHERE id = ? AND status = "suspended"')->execute([$inv['subscription_id']]);
         send_notice($inv['email'], $inv['name'], 'Ödemeniz alındı — ' . $inv['number'], 'Ödemeniz alındı',
@@ -100,10 +140,11 @@ function pdf_attachment(callable $make): array
     }
 }
 
+/** Ödenen tutar bilinmeli ve beklenen tutarı karşılamalı: bilinmeyen, sıfır ya da eksik tutar asla kabul edilmez. */
 function amount_ok(?float $paid, float $expected, string $ref): bool
 {
-    if ($paid !== null && $paid > 0 && $paid + 0.01 < $expected) {
-        error_log("Tutar uyuşmuyor: $ref ($paid < $expected)");
+    if ($paid === null || $paid <= 0 || $paid + 0.01 < $expected) {
+        error_log("Tutar geçersiz: $ref (" . var_export($paid, true) . " / $expected)");
         return false;
     }
     return true;

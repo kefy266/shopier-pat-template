@@ -11,10 +11,6 @@ require __DIR__ . '/../lib/store.php';
 
 $count = 0;
 foreach (ShopierClient::fromEnv()->listOrders(50) as $order) {
-    if (($order['paymentStatus'] ?? '') !== 'paid') continue;
-    $paid = isset($order['totals']['total']) ? (float) $order['totals']['total'] : null;
-    foreach ($order['lineItems'] ?? [] as $item) {
-        if (mark_product_paid((string) ($item['productId'] ?? ''), (string) $order['id'], $paid)) $count++;
-    }
+    $count += count(process_shopier_order($order));
 }
 echo "Eşitlendi: $count sipariş\n";

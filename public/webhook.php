@@ -7,6 +7,7 @@
 
 declare(strict_types=1);
 require __DIR__ . '/../lib/webhook.php';
+require __DIR__ . '/../lib/shopier.php';
 require __DIR__ . '/../lib/store.php';
 
 header('Content-Type: application/json');
@@ -18,19 +19,16 @@ if (!shopier_signature_valid($raw, $_SERVER['HTTP_SHOPIER_SIGNATURE'] ?? '', sho
 }
 
 $event = json_decode($raw, true);
-$order = is_array($event) ? ($event['data'] ?? $event) : null;
-if (!is_array($order)) {
+$body = is_array($event) ? ($event['data'] ?? $event) : null;
+if (!is_array($body) || empty($body['id'])) {
     http_response_code(400);
     exit(json_encode(['error' => 'invalid json']));
 }
-if (($order['paymentStatus'] ?? 'paid') !== 'paid') {
-    exit(json_encode(['ok' => true, 'ignored' => 'not paid']));
-}
 
-$paid = isset($order['totals']['total']) ? (float) $order['totals']['total'] : null;
-$processed = [];
-foreach ($order['lineItems'] ?? [] as $item) {
-    $id = mark_product_paid((string) ($item['productId'] ?? ''), (string) ($order['id'] ?? ''), $paid);   // sipariş ya da aylık fatura
-    if ($id) $processed[] = $id;
+// Bildirim yalnızca hangi siparişin geldiğini söyler; karar Shopier API'sinden okunan kayda göre verilir.
+$order = ShopierClient::fromEnv()->getOrder((string) $body['id']);
+if (!$order) {
+    http_response_code(503);   // Shopier yeniden dener
+    exit(json_encode(['error' => 'order lookup failed']));
 }
-echo json_encode(['ok' => true, 'processed' => $processed]);
+echo json_encode(['ok' => true, 'processed' => process_shopier_order($order)]);

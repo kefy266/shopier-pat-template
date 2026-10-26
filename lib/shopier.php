@@ -9,6 +9,36 @@
 
 declare(strict_types=1);
 
+/**
+ * Shopier siparişinin bu ürün için gerçekten, eksiksiz ödendiğini doğrular. Ödenen tutarı döndürür; değilse null.
+ *
+ * Kurallar: ödeme durumu tam olarak "paid"; iptal ya da iade yok; siparişte yalnızca bu ürün (1 adet) var;
+ * sipariş toplamı ve ürün satırı beklenen tutarı karşılıyor. Böylece %100 indirim kuponu, 0 TL sipariş,
+ * eksik alanlı bildirim ya da tek ödemeyle birden çok hizmet alma gibi atlatmalar reddedilir.
+ */
+function shopier_verify_order(array $so, string $productId, float $expected, ?string &$reason = null): ?float
+{
+    $reason = null;
+    if (($so['paymentStatus'] ?? '') !== 'paid') { $reason = 'ödenmemiş (' . ($so['paymentStatus'] ?? 'yok') . ')'; return null; }
+    if (in_array(strtolower((string) ($so['status'] ?? '')), ['cancelled', 'canceled', 'refunded'], true)) { $reason = 'iptal edilmiş'; return null; }
+    if (!empty($so['refunds'])) { $reason = 'iade var'; return null; }
+    $lines = array_values($so['lineItems'] ?? []);
+    if (count($lines) !== 1 || (string) ($lines[0]['productId'] ?? '') !== $productId) { $reason = 'siparişte başka ürünler var'; return null; }
+    if ((int) ($lines[0]['quantity'] ?? 1) !== 1) { $reason = 'adet 1 değil'; return null; }
+    if (!isset($so['totals']['total']) || !is_numeric($so['totals']['total'])) { $reason = 'tutar bilgisi yok'; return null; }
+    $paid = (float) $so['totals']['total'];
+    if (isset($lines[0]['total']) && is_numeric($lines[0]['total'])) $paid = min($paid, (float) $lines[0]['total']);
+    if ($paid <= 0 || $paid + 0.01 < $expected) { $reason = "eksik tutar ($paid < $expected)"; return null; }
+    return $paid;
+}
+
+/** Shopier siparişi ödendikten sonra iade/iptal edildiyse true. */
+function shopier_order_revoked(array $so): bool
+{
+    return ($so['paymentStatus'] ?? '') !== 'paid' || !empty($so['refunds'])
+        || in_array(strtolower((string) ($so['status'] ?? '')), ['cancelled', 'canceled', 'refunded'], true);
+}
+
 final class ShopierClient
 {
     private const BASE = 'https://api.shopier.com/v1';
@@ -76,8 +106,11 @@ final class ShopierClient
 
     public function getOrder(string $orderId): ?array
     {
+        if (!preg_match('/^[A-Za-z0-9_-]{1,64}$/', $orderId)) return null;
         $r = $this->request('GET', '/orders/' . rawurlencode($orderId));
-        return $r['status'] === 200 ? $r['data'] : null;
+        if ($r['status'] !== 200 || !is_array($r['data'])) return null;
+        $order = $r['data']['data'] ?? $r['data'];
+        return is_array($order) && (string) ($order['id'] ?? '') === $orderId ? $order : null;
     }
 
     /** Son siparişler (yeniden eskiye). */

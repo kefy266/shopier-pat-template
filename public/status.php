@@ -29,12 +29,8 @@ if (!$paid && $row['shopier_product_id'] && time() - (int) ($_SESSION['last_chec
     $_SESSION['last_check'] = time();
     session_write_close();
     foreach (ShopierClient::fromEnv()->listOrders(25) as $o) {
-        if (($o['paymentStatus'] ?? '') !== 'paid') continue;
         foreach ($o['lineItems'] ?? [] as $li) {
-            if ((string) ($li['productId'] ?? '') === $row['shopier_product_id']) {
-                mark_product_paid($row['shopier_product_id'], (string) $o['id'], isset($o['totals']['total']) ? (float) $o['totals']['total'] : null);
-                $paid = true;
-            }
+            if ((string) ($li['productId'] ?? '') === $row['shopier_product_id'] && process_shopier_order($o)) $paid = true;
         }
     }
 }
