@@ -1,13 +1,14 @@
 <?php
 /**
- * Site içi ödeme sayfası. Shopier ödeme sayfası bu sayfanın içinde (iframe) açılır;
- * müşteri siteden ayrılmaz, kart bilgisi sunucunuza gelmez.
+ * Ödeme sayfası. Shopier ödeme sayfası yeni sekmede (Shopier'in kendi sayfasında) açılır;
+ * kart bilgisi sunucunuza gelmez. Bu sekme açık kalır ve ödeme doğrulanınca güncellenir.
  *
  *   /pay.php?order=ORD-...   yeni sipariş (yalnızca siparişi oluşturan oturum)
  *   /pay.php?invoice=ID&t=…  aylık fatura (e-postadaki imzalı bağlantı)
  *
- * Banka 3D Secure ekranı ya da tarayıcı iframe'i engellerse "yeni sekmede aç" bağlantısı kullanılır;
- * her iki durumda da sayfa durumu status.php ile izler ve ödeme görülünce yönlendirir.
+ * Neden iframe değil: Shopier'i gömülü açınca bazı tarayıcılar (Safari, Brave, mobil) üçüncü taraf
+ * çerezlerini engelliyor ve Shopier "Hata kodu 1074 — sayfa görüntülenemiyor" gösteriyor.
+ * Güvenlik farkı yok: ödeme her durumda sunucuda Shopier API'sinden doğrulanır (status.php / webhook).
  */
 
 declare(strict_types=1);
@@ -59,8 +60,9 @@ $e = fn($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
   .sum { padding: 20px; align-self: start; }
   .sum div { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; font-size: 14px; }
   .status { padding: 12px 16px; border-bottom: 1px solid #eee; font-size: 14px; background: #fafafa; }
-  iframe { width: 100%; height: 1150px; border: 0; display: block; }
-  .alt { padding: 12px 16px; border-top: 1px solid #eee; font-size: 13px; color: #737373; }
+  .pay { padding: 28px 20px; display: grid; gap: 14px; justify-items: start; }
+  .btn { display: inline-block; background: #0a0a0a; color: #fff; text-decoration: none; padding: 13px 20px; border-radius: 8px; font-weight: 600; }
+  .alt { font-size: 13px; color: #737373; }
   @media (max-width: 800px) { .wrap { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -72,16 +74,19 @@ $e = fn($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
     <div><span>Tutar</span><span><?= money((float) $row['amount']) ?></span></div>
   </div>
   <div class="box">
-    <div class="status" id="status">Ödemeniz bekleniyor — kart bilgilerinizi aşağıya girin.</div>
-    <iframe src="<?= $e($payUrl) ?>" title="Shopier ödeme" allow="payment"></iframe>
-    <div class="alt">Ödeme ekranı açılmıyor mu? <a href="<?= $e($payUrl) ?>" target="_blank" rel="noopener">Yeni sekmede aç ↗</a></div>
+    <div class="status" id="status">Ödemeniz bekleniyor.</div>
+    <div class="pay" id="pay">
+      <span>Ödeme Shopier'in güvenli sayfasında yeni sekmede açılır.</span>
+      <a class="btn" href="<?= $e($payUrl) ?>" target="_blank" rel="noopener">Shopier'de öde · <?= money((float) $row['amount']) ?> ↗</a>
+      <span class="alt">Ödemeyi yaptıktan sonra bu sekmeye dönün; ödeme doğrulanınca bu sayfa güncellenir.</span>
+    </div>
   </div>
 </div>
 <script>
   setInterval(function () {
     fetch(<?= json_encode($statusUrl) ?>, { cache: 'no-store', credentials: 'same-origin' })
       .then(function (r) { return r.json(); })
-      .then(function (d) { if (d.paid) { document.getElementById('status').textContent = 'Ödemeniz alındı. Teşekkürler!'; document.querySelector('iframe').remove(); } })
+      .then(function (d) { if (d.paid) { document.getElementById('status').textContent = 'Ödemeniz alındı. Teşekkürler!'; document.getElementById('pay').remove(); } })
       .catch(function () {});
   }, 5000);
 </script>

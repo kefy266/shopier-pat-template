@@ -18,7 +18,7 @@ Shopier REST API v1 ile **Personal Access Token (PAT)** kullanarak ödeme ve **a
 ```
 checkout.php ──► pay.php ──► (ilk açılışta) Shopier: POST /products → tek kullanımlık ödeme ürünü
                    │
-                   ├─ iframe: Shopier ödeme sayfası (kart + 3D Secure)   ← "yeni sekmede aç" yedeği
+                   ├─ yeni sekme: Shopier ödeme sayfası (kart + 3D Secure)
                    └─ status.php her 5 sn: ödendi mi? (gerekirse Shopier'e doğrudan sorar)
 
 Shopier ──► webhook.php (order.created, imzalı) ──► mark_product_paid()
@@ -79,7 +79,7 @@ cron: scripts/refund_check.php 30 dk   — Shopier'de iade/iptal edilen ödemele
 | Yapılabilir | Yapılamaz |
 |---|---|
 | Ödeme bağlantısı (dijital ürün) oluşturma | Kart bilgisini kendi formunuzla alıp çekim yapma |
-| Ödeme sayfasını kendi sitenizde iframe içinde açma | Kart saklama (tokenization) |
+| Ödeme sayfasını yeni sekmede açıp durumu kendi sitenizde izleme | Kart saklama (tokenization) |
 | Siparişleri ve ödeme durumunu sorgulama | Otomatik tekrarlayan kart çekimi |
 | Webhook ile anlık ödeme bildirimi | |
 | İade, indirim kodu, bakiye, ödeme aktarımları (yetkiye göre) | |
@@ -88,7 +88,7 @@ Aylık abonelik bu yüzden "her ay fatura + ödeme bağlantısı" modeliyle çal
 
 ## Ödeme doğrulama kuralları
 
-Ödeme sayfası Shopier'i site içinde (iframe) gösterir; bu yüzden **tarayıcıdan gelen hiçbir şeye güvenilmez.** Bir ödeme ancak şu kurallar sağlanırsa işlenir (`shopier_verify_order`):
+Ödeme Shopier'in kendi sayfasında yapılır ve müşteri sitenize geri döner; bu yüzden **tarayıcıdan gelen hiçbir şeye güvenilmez.** Bir ödeme ancak şu kurallar sağlanırsa işlenir (`shopier_verify_order`):
 
 - Webhook gövdesi yalnızca sipariş numarasını verir; sipariş **Shopier API'sinden yeniden okunur**, karar o kayda göre verilir.
 - `paymentStatus` tam olarak `paid` olmalı (alan yoksa ödenmemiş sayılır); sipariş iptal edilmemiş, iade edilmemiş olmalı.
@@ -109,7 +109,7 @@ Aylık abonelik bu yüzden "her ay fatura + ödeme bağlantısı" modeliyle çal
   ```
 - E-postaların spam'e düşmemesi için gönderen alan adında **SPF**, **DKIM** ve **DMARC** kayıtları tanımlı olmalı. Gönderen sunucunun ters DNS (PTR) kaydı da ayarlanmalı.
 - PDF belge, ödeme kaydı niteliğindedir; Türkiye'de resmi fatura için e-Arşiv / e-Fatura entegrasyonu (GİB veya özel entegratör) ayrıca gerekir.
-- Bazı bankaların 3D Secure ekranı ve Safari iframe'i kısıtlayabilir; `pay.php` bu durumda "yeni sekmede aç" bağlantısı sunar. Durum takibi her iki durumda da çalışır.
+- Shopier'i iframe içinde açmayın: Safari, Brave ve mobil tarayıcılar üçüncü taraf çerezlerini engellediği için Shopier "Hata kodu 1074" gösterebilir. `pay.php` ödemeyi yeni sekmede açar; durum takibi (status.php) bu sekmede çalışmaya devam eder.
 
 ## Lisans
 
