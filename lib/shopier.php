@@ -113,11 +113,42 @@ final class ShopierClient
         return is_array($order) && (string) ($order['id'] ?? '') === $orderId ? $order : null;
     }
 
-    /** Son siparişler (yeniden eskiye). */
-    public function listOrders(int $limit = 50): array
+    /** Tek sayfa sipariş (yeniden eskiye). Tüm siparişler için allOrders() kullanın. */
+    public function listOrders(int $limit = 50, int $page = 1): array
     {
-        $r = $this->request('GET', '/orders?limit=' . $limit);
+        $r = $this->request('GET', '/orders?limit=' . $limit . '&page=' . $page);
         return $r['status'] === 200 && is_array($r['data']) ? $r['data'] : [];
+    }
+
+    /**
+     * Hesaptaki TÜM siparişler: boş sayfa gelene kadar sayfa sayfa okunur (güvenlik sınırı 1000 sayfa).
+     * Okunamayan sayfa bir kez daha denenir. Sonuç aynı çalışma içinde 60 sn önbellekte tutulur
+     * (cron her bekleyen ödeme için ayrı ayrı istek atmasın). İlk sayfa okunamazsa RuntimeException.
+     * Son N siparişe bakmak yetmez: aynı Shopier hesabını birden çok site kullanıyorsa eski ödemeler kaçar.
+     */
+    public function allOrders(): array
+    {
+        static $cache = [];
+        $key = spl_object_id($this);
+        if (isset($cache[$key]) && time() - $cache[$key][0] < 60) return $cache[$key][1];
+        $all = []; $seen = [];
+        for ($page = 1; $page <= 1000; $page++) {
+            $r = $this->request('GET', '/orders?limit=50&page=' . $page);
+            if ($r['status'] !== 200 || !is_array($r['data'])) { usleep(800000); $r = $this->request('GET', '/orders?limit=50&page=' . $page); }
+            if ($r['status'] !== 200 || !is_array($r['data'])) {
+                if ($page === 1) throw new RuntimeException('Shopier sipariş listesi okunamadı: HTTP ' . $r['status']);
+                break;
+            }
+            $new = 0;
+            foreach (array_is_list($r['data']) ? $r['data'] : [] as $o) {
+                $id = (string) ($o['id'] ?? '');
+                if ($id === '' || isset($seen[$id])) continue;
+                $seen[$id] = true; $all[] = $o; $new++;
+            }
+            if ($new < 50) break;   // son sayfa ya da API sayfalamayı yok saydı
+        }
+        $cache[$key] = [time(), $all];
+        return $all;
     }
 
     public function createWebhook(string $event, string $url): array

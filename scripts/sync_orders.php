@@ -10,7 +10,7 @@ require __DIR__ . '/../lib/shopier.php';
 require __DIR__ . '/../lib/store.php';
 
 $count = 0;
-foreach (ShopierClient::fromEnv()->listOrders(50) as $order) {
+foreach (ShopierClient::fromEnv()->allOrders() as $order) {
     $count += count(process_shopier_order($order));
 }
 echo "Eşitlendi: $count sipariş\n";

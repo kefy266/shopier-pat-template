@@ -28,7 +28,8 @@ $paid = $row['status'] === 'paid';
 if (!$paid && $row['shopier_product_id'] && time() - (int) ($_SESSION['last_check'] ?? 0) >= 8) {
     $_SESSION['last_check'] = time();
     session_write_close();
-    foreach (ShopierClient::fromEnv()->listOrders(25) as $o) {
+    try { $orders = ShopierClient::fromEnv()->allOrders(); } catch (Throwable $e) { $orders = []; error_log($e->getMessage()); }
+    foreach ($orders as $o) {
         foreach ($o['lineItems'] ?? [] as $li) {
             if ((string) ($li['productId'] ?? '') === $row['shopier_product_id'] && process_shopier_order($o)) $paid = true;
         }

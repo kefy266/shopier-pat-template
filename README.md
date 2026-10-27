@@ -109,6 +109,7 @@ Aylık abonelik bu yüzden "her ay fatura + ödeme bağlantısı" modeliyle çal
   ```
 - E-postaların spam'e düşmemesi için gönderen alan adında **SPF**, **DKIM** ve **DMARC** kayıtları tanımlı olmalı. Gönderen sunucunun ters DNS (PTR) kaydı da ayarlanmalı.
 - PDF belge, ödeme kaydı niteliğindedir; Türkiye'de resmi fatura için e-Arşiv / e-Fatura entegrasyonu (GİB veya özel entegratör) ayrıca gerekir.
+- Ödeme kontrolü (status.php, scripts/sync_orders.php) `allOrders()` ile hesaptaki **tüm** siparişleri sayfa sayfa okur. Yalnızca son N siparişe bakmayın: aynı Shopier hesabını birden çok site kullanıyorsa eski ödemeler bulunamaz.
 - Shopier'i iframe içinde açmayın: Safari, Brave ve mobil tarayıcılar üçüncü taraf çerezlerini engellediği için Shopier "Hata kodu 1074" gösterebilir. `pay.php` ödemeyi yeni sekmede açar; durum takibi (status.php) bu sekmede çalışmaya devam eder.
 
 ## Lisans
